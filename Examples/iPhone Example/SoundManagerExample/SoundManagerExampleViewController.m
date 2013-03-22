@@ -56,6 +56,11 @@
     [self playMusic];
 }
 
+- (IBAction)queueBothSounds:(id)sender
+{
+    [[SoundManager sharedManager] playSounds:@[@"sound1", @"sound2"] delays:@[@2]];
+}
+
 - (IBAction)playSound1:(UIButton *)sender
 {
     [[SoundManager sharedManager] playSound:@"sound1" looping:NO];

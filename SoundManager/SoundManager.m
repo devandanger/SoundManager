@@ -38,6 +38,7 @@
 
 
 NSString *const SoundDidFinishPlayingNotification = @"SoundDidFinishPlayingNotification";
+NSString *const QueuedSoundDidFinishPlayingNotification = @"QueuedSoundDidFinishPlayingNotification";
 
 
 #ifdef SM_USE_AV_AUDIO_PLAYER
@@ -53,9 +54,11 @@ NSString *const SoundDidFinishPlayingNotification = @"SoundDidFinishPlayingNotif
 @property (nonatomic, strong) NSTimer *timer;
 @property (nonatomic, strong) Sound *selfReference;
 @property (nonatomic, strong) SM_SOUND *sound;
+@property (nonatomic, assign) BOOL queued;
 
 - (void)prepareToPlay;
-
+- (void)playQueuedSounds;
+- (void)scheduleQueueTimer;
 @end
 
 
@@ -267,7 +270,12 @@ NSString *const SoundDidFinishPlayingNotification = @"SoundDidFinishPlayingNotif
     
     //fire events
     if (completionHandler) completionHandler(NO);
-    [[NSNotificationCenter defaultCenter] postNotificationName:SoundDidFinishPlayingNotification object:self];
+    
+    if(self.queued) {
+        [[NSNotificationCenter defaultCenter] postNotificationName:QueuedSoundDidFinishPlayingNotification object:self];
+    } else {
+        [[NSNotificationCenter defaultCenter] postNotificationName:SoundDidFinishPlayingNotification object:self];
+    }
     
     //set to nil on next runloop update so sound is not released unexpectedly
     [self performSelector:@selector(setSelfReference:) withObject:nil afterDelay:0.0];
@@ -338,7 +346,9 @@ NSString *const SoundDidFinishPlayingNotification = @"SoundDidFinishPlayingNotif
 
 @property (nonatomic, strong) Sound *currentMusic;
 @property (nonatomic, strong) NSMutableArray *currentSounds;
-
+@property (nonatomic, strong) NSMutableArray *queuedSounds;
+@property (nonatomic, strong) NSMutableArray *delays;
+@property (nonatomic, strong) NSTimer *queueingTimer;
 @end
 
 
@@ -472,7 +482,62 @@ NSString *const SoundDidFinishPlayingNotification = @"SoundDidFinishPlayingNotif
     [self stopMusic:YES];
 }
 
+
+// only allow one queue sound list at a time.
+- (BOOL)playSounds:(NSArray*)soundsOrNames delays:(NSArray*)delays {
+    if(self.queuedSounds.count > 0) {
+        return NO;
+    } else {
+        self.queuedSounds = [NSMutableArray arrayWithArray:soundsOrNames];
+        self.delays = [NSMutableArray arrayWithArray:delays];
+        [self playQueuedSounds];
+        return NO;
+    }
+}
+
+
+// similar implementation however send different notification
+- (void)playQueuedSounds {
+    Sound *sound;
+    if(self.queuedSounds.count == 0) {
+        return;
+    }
+    id soundOrName = [self.queuedSounds objectAtIndex:0];
+    [self.queuedSounds removeObject:soundOrName];
+    
+    sound = [soundOrName isKindOfClass:[Sound class]]? soundOrName: [Sound soundNamed:soundOrName];
+    sound.queued = YES;
+
+    [currentSounds addObject:sound];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(queuedSoundFinished:)
+                                                 name:QueuedSoundDidFinishPlayingNotification
+                                               object:sound];
+    
+    [sound play];
+}
+
 - (void)playSound:(id)soundOrName looping:(BOOL)looping fadeIn:(BOOL)fadeIn
+{
+    Sound *sound = [soundOrName isKindOfClass:[Sound class]]? soundOrName: [Sound soundNamed:soundOrName];
+    if (![currentSounds containsObject:sound])
+    {
+        [currentSounds addObject:sound];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(soundFinished:)
+                                                     name:SoundDidFinishPlayingNotification
+                                                   object:sound];
+    }
+    sound.looping = looping;
+    sound.volume = fadeIn? 0.0f: soundVolume;
+    [sound play];
+    if (fadeIn)
+    {
+        [sound fadeTo:soundVolume duration:soundFadeDuration];
+    }
+}
+
+- (void)playSound:(id)soundOrName looping:(BOOL)looping fadeIn:(BOOL)fadeIn delay:(NSNumber*)delay
 {
     Sound *sound = [soundOrName isKindOfClass:[Sound class]]? soundOrName: [Sound soundNamed:soundOrName];
     if (![currentSounds containsObject:sound])
@@ -585,6 +650,33 @@ NSString *const SoundDidFinishPlayingNotification = @"SoundDidFinishPlayingNotif
     [[NSNotificationCenter defaultCenter] removeObserver:self
                                                     name:SoundDidFinishPlayingNotification
                                                   object:sound];
+}
+
+- (void)queuedSoundFinished:(NSNotification *)notification
+{
+    Sound *sound = [notification object];
+    [currentSounds removeObject:sound];
+    
+    if(self.queuedSounds.count == 0) {
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                        name:QueuedSoundDidFinishPlayingNotification
+                                                      object:sound];
+    } else {
+        if([self.delays count] == 0) {
+             NSNumber *delay = [self.delays objectAtIndex:0];
+            [self.delays removeObject:delay];
+            [self scheduleQueueTimer:delay];
+        } else {
+            [self playQueuedSounds];
+        }
+    }
+}
+
+- (void)scheduleQueueTimer:(NSNumber*)timeDelay {
+    [self.queueingTimer invalidate];
+    self.queueingTimer = nil;
+    
+    self.queueingTimer = [NSTimer scheduledTimerWithTimeInterval:[timeDelay floatValue] target:self selector:@selector(playQueuedSounds) userInfo:nil repeats:YES];
 }
 
 - (void)musicFinished:(NSNotification *)notification

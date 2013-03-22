@@ -171,6 +171,9 @@ typedef void (^SoundCompletionHandler)(BOOL didFinish);
 - (void)stopMusic:(BOOL)fadeOut;
 - (void)stopMusic;
 
+- (BOOL)playSounds:(NSArray*)soundsOrNames delays:(NSArray*)delays;
+
+
 - (void)playSound:(id)soundOrName looping:(BOOL)looping fadeIn:(BOOL)fadeIn;
 - (void)playSound:(id)soundOrName looping:(BOOL)looping;
 - (void)playSound:(id)soundOrName;
